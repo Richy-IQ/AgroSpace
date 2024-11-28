@@ -5,8 +5,8 @@ from rest_framework.authtoken.views import obtain_auth_token
 
 
 from .views import (ProductViewSet, CollectionViewSet, CartViewSet, CustomerViewSet, PromotionViewSet, ProductImageViewSet,
-                    OrderItemViewSet, OrderViewSet, CommentViewSet, AddressViewSet, ReviewViewSet, CartItemViewSet, PaymentView, 
-                    RegisterView, LoginView, LogoutView)
+                    OrderItemViewSet, OrderViewSet, CommentViewSet, AddressViewSet, ReviewViewSet, CartItemViewSet,
+                    RegisterView, LoginView, LogoutView,  InitializePaymentView, VerifyPaymentView,)
 
 router = routers.DefaultRouter()
 router = DefaultRouter()
@@ -26,8 +26,9 @@ router.register(r'reviews', ReviewViewSet)
 urlpatterns = [
     path('', include(router.urls)),
     path('api-token-auth/', obtain_auth_token),
-    path('payment/', PaymentView.as_view(), name='payment'),
     path('signup/', RegisterView.as_view(), name='signup'),
     path('login/', LoginView.as_view(), name='login'),
     path('logout/', LogoutView.as_view(), name='logout'),
+    path('paystack/initialize/', InitializePaymentView.as_view(), name='initialize-payment'),
+    path('paystack/verify/<str:reference>/', VerifyPaymentView.as_view(), name='verify-payment')
 ]

@@ -142,18 +142,19 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = ['id', 'username', 'email']
 
+
 class RegisterSerializer(serializers.Serializer):
     username = serializers.CharField(write_only=True)
+    email = serializers.EmailField(required=False)
     password = serializers.CharField(write_only=True)
     confirm_password = serializers.CharField(write_only=True)
-    
-    class Meta:
-        model = User
-        fields = ['username', 'email', 'password', 'confirm_password']
 
     def validate(self, data):
         if data['password'] != data['confirm_password']:
-            raise serializers.ValidationError("Passwords do not match.")
+            raise serializers.ValidationError({"confirm_password": "Passwords do not match."})
+        
+        # Remove confirm_password to prevent it from being passed to create method
+        data.pop('confirm_password')
         return data
     
     def create(self, validated_data):
@@ -162,9 +163,9 @@ class RegisterSerializer(serializers.Serializer):
         password = validated_data.get('password')
 
         if not username:
-            raise serializers.ValidationError("Username is required.")
+            raise serializers.ValidationError({"username": "Username is required."})
         if not password:
-            raise serializers.ValidationError("Password is required.")
+            raise serializers.ValidationError({"password": "Password is required."})
 
         user = User.objects.create_user(
             username=username,
@@ -174,7 +175,6 @@ class RegisterSerializer(serializers.Serializer):
         return user
     
    
-
 class LoginSerializer(serializers.Serializer):
     username = serializers.CharField()
     password = serializers.CharField()
@@ -182,17 +182,25 @@ class LoginSerializer(serializers.Serializer):
     def validate(self, data):
         username = data.get('username')
         password = data.get('password')
+        
+        user = authenticate(username=username, password=password)
+        if not user:
+            raise serializers.ValidationError('Invalid credentials')
+        
+        data['user'] = user
+        return data
 
-        if username and password:
-            user = authenticate(username=username, password=password)
-            if user:
-                if user.is_active:
-                    return user
-                else:
-                    raise serializers.ValidationError("User is inactive.")
-            else:
-                raise serializers.ValidationError("Invalid credentials.")
-        else:
-            raise serializers.ValidationError("Must include 'username' and 'password'.")
+ 
+class InitializePaymentSerializer(serializers.Serializer):
+    email = serializers.EmailField()
+    amount = serializers.IntegerField()
+    channels = serializers.ListField(
+        child=serializers.ChoiceField(choices=["card", "bank"]),
+        default=["card", "bank"],  # Default to both payment options
+    )
 
-        return super().validate(data)
+
+class PaystackTransactionResponseSerializer(serializers.Serializer):
+    status = serializers.BooleanField()
+    message = serializers.CharField()
+    data = InitializePaymentSerializer()

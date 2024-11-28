@@ -1,4 +1,5 @@
-import stripe
+import requests
+from django.conf import settings
 from django.db.models import Count
 from django.contrib.auth import login, logout
 from rest_framework.views import APIView
@@ -12,12 +13,10 @@ from rest_framework.viewsets import ModelViewSet, GenericViewSet
 from .models import (Product, Cart, CartItem, Collection, Promotion, Comment, Customer, ProductImage, Address, Review, Order, OrderItem)
 from .serializers import (ProductSerializer, CollectionSerializer, CartSerializer, CartItemSerializer, AddCartItemSerializer, 
                           UpdateCartItemSerializer, PromotionSerializer, ProductImageSerializer, CommentSerializer, AddressSerializer,
-                          CustomerSerializer, ReviewSerializer, OrderSerializer, OrderItemSerializer, UserSerializer, LoginSerializer,
-                          PaymentSerializer, RegisterSerializer)
+                          CustomerSerializer, ReviewSerializer, OrderSerializer, OrderItemSerializer, LoginSerializer,
+                          InitializePaymentSerializer, RegisterSerializer)
 
 User = get_user_model()
-
-stripe.api_key = 'your-stripe-secret-key'
 
 class PromotionViewSet(ModelViewSet):
     queryset = Promotion.objects.all()
@@ -26,7 +25,6 @@ class PromotionViewSet(ModelViewSet):
 class ProductViewSet(ModelViewSet):
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
-
 
     
 class CollectionViewSet(ModelViewSet):
@@ -91,48 +89,107 @@ class ReviewViewSet(ModelViewSet):
     queryset = Review.objects.all()
     serializer_class = ReviewSerializer
 
-class PaymentView(APIView):
-    def post(self, request):
-        serializer = PaymentSerializer(data=request.data)
-        if serializer.is_valid():
-            try:
-                charge = stripe.Charge.create(
-                    amount=int(serializer.validated_data['amount'] * 100),  # amount in cents
-                    currency=serializer.validated_data['currency'],
-                    source=serializer.validated_data['stripe_token'],
-                    description="E-commerce payment",
+
+class InitializePaymentView(APIView):
+    def post(self, request, *args, **kwargs):
+        serializer = InitializePaymentSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        data = serializer.validated_data
+        url = "https://api.paystack.co/transaction/initialize"
+        payload = {
+            "email": data["email"],
+            "amount": data["amount"], #* 100,  # Convert amount to kobo
+            "channels": data["channels"],  # Payment channels
+        }
+        headers = {
+            "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
+            "Content-Type": "application/json",
+        }
+
+        try:
+            response = requests.post(url, json=payload, headers=headers)
+            response_data = response.json()
+
+            if response.status_code == 200 and response_data.get("status"):
+                return Response({
+                    "authorization_url": response_data["data"]["authorization_url"],
+                    "access_code": response_data["data"]["access_code"],
+                    "reference": response_data["data"]["reference"],
+                })
+            else:
+                return Response(
+                    {"error": response_data.get("message", "An error occurred")},
+                    status=response.status_code,
                 )
-                return Response(charge, status=status.HTTP_200_OK)
-            except stripe.error.StripeError as e:
-                return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-    
+        except requests.exceptions.RequestException as e:
+            return Response({"error": str(e)}, status=500)
+
+
+class VerifyPaymentView(APIView):
+    def get(self, request, reference):
+        url = f"https://api.paystack.co/transaction/verify/{reference}"
+        headers = {
+            "Authorization": f"Bearer {settings.PAYSTACK_SECRET_KEY}",
+        }
+
+        response = requests.get(url, headers=headers)
+
+        if response.status_code == 200:
+            
+            return Response(response.json(), status=status.HTTP_200_OK)
+        else:
+            return Response(
+                {"error": "Failed to verify payment", "details": response.json()},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
 
 class RegisterView(APIView):
     permission_classes = [AllowAny]
+    def get(self, request):
+        return Response({
+            "initial_data": {
+                "username": "",
+                "email": "",
+                "password": "",
+                "confirm_password": ""
+            }
+        }, status=status.HTTP_200_OK)
 
     def post(self, request):
-        print("Request data:", request.data)  # Debugging
         serializer = RegisterSerializer(data=request.data)
+        
         if serializer.is_valid():
             user = serializer.save()
-            token, created = Token.objects.get_or_create(user=user)
-            return Response({"token": token.key}, status=status.HTTP_201_CREATED)
-        print("Errors:", serializer.errors)  # Debugging
+            token, _ = Token.objects.get_or_create(user=user)
+            return Response({
+                "token": token.key,
+                "user_id": user.id
+            }, status=status.HTTP_201_CREATED)
+        
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 class LoginView(APIView):
     permission_classes = [AllowAny]
+    def get(self, request):
+        return Response({
+            "initial_data": {
+                "username": "",
+                "password": "",
+            }
+        }, status=status.HTTP_200_OK)
 
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
         if serializer.is_valid():
-            user = serializer.validated_data
+            user = serializer.validated_data['user']  # Access the user object
             login(request, user) 
             token, created = Token.objects.get_or_create(user=user)
             return Response({"token": token.key}, status=status.HTTP_200_OK)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-
 
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
